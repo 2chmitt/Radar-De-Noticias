@@ -4,8 +4,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import feedparser
 from datetime import datetime, timedelta, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
+import time
 import urllib.parse
+import requests
 
 app = FastAPI()
 
@@ -25,16 +28,15 @@ app.add_middleware(
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.join(BASE_DIR, "..", "frontend")
 
-from starlette.responses import Response
 from starlette.staticfiles import StaticFiles
 
-class NoCacheStaticFiles(StaticFiles):
+class TunedStaticFiles(StaticFiles):
     async def get_response(self, path, scope):
         response = await super().get_response(path, scope)
-        response.headers["Cache-Control"] = "no-store"
+        response.headers["Cache-Control"] = "public, max-age=3600"
         return response
 
-app.mount("/static", NoCacheStaticFiles(directory=FRONTEND_DIR), name="static")
+app.mount("/static", TunedStaticFiles(directory=FRONTEND_DIR), name="static")
 
 
 @app.get("/")
@@ -49,11 +51,23 @@ def serve_fpm():
 def serve_sobre():
     return FileResponse(os.path.join(FRONTEND_DIR, "sobre.html"))
 
+@app.get("/escritorio")
+def serve_escritorio():
+    return FileResponse(os.path.join(FRONTEND_DIR, "escritorio.html"))
+
 # =========================
 # CONFIG
 # =========================
 MIN_RELEVANCIA = 1
 TZ_BRASIL = timezone(timedelta(hours=-3))
+REQUEST_TIMEOUT_SECONDS = 8
+FEED_CACHE_TTL_SECONDS = 600
+RESULT_CACHE_TTL_SECONDS = 300
+MAX_FEED_WORKERS = 6
+USER_AGENT = "RadarNoticias/1.0 (+https://local.app)"
+
+_feed_cache = {}
+_result_cache = {}
 
 # =========================
 # PUBLISHERS
@@ -90,6 +104,29 @@ FPM_PUBLISHERS = [
     "Agência Senado Notícias",
 ]
 
+ESCRITORIO_PUBLISHERS = [
+    # Grandes portais
+    "g1","UOL","Estadão","Folha","O Globo","CNN Brasil",
+    "Valor Econômico","InfoMoney","Agência Brasil",
+
+    # Jurídicos
+    "Consultor Jurídico","ConJur","Migalhas",
+    "JOTA","Justiça em Foco","Rota Jurídica",
+    "JusBrasil","Tribunal de Justiça",
+    "STF","STJ","TRF","TJ",
+
+    # Governamentais
+    "Diário Oficial","Diário Oficial da União",
+    "Gov.br","Planalto",
+
+    # Redes sociais
+    "Instagram","LinkedIn","Facebook",
+    "X","Twitter","YouTube",
+    "Threads","TikTok",
+
+    # Busca ampla
+    "Google","Bing News"
+]
 
 # =========================
 # TERMOS (ORIGINAIS COMPLETOS)
@@ -192,14 +229,39 @@ FPM_TERMS = [
     "pacto federativo",
 ]
 
+ESCRITORIO_TERMS = [
+    "camilarodrigues.advogados",
+    "camila rodrigues advogados",
+    "camila rodrigues assessoria jurídica",
+    "camila rodrigues advogada",
+    "camila rodrigues assessoria jurídica",
+    "cr assessoria jurídica",
+    "camila rodrigues escritório",
+    "processo camila rodrigues",
+    "ação camila rodrigues",
+    "decisão camila rodrigues",
+    "publicação camila rodrigues",
+]
+
 # =========================
-# FUNÇÕES ORIGINAIS
+# FUNÇÕES DE BUSCA
 # =========================
+def preparar_lista(lista):
+    return tuple(item.lower() for item in lista)
+
+ROYALTIES_TERMS_INDEX = preparar_lista(ROYALTIES_TERMS)
+FPM_TERMS_INDEX = preparar_lista(FPM_TERMS)
+ESCRITORIO_TERMS_INDEX = preparar_lista(ESCRITORIO_TERMS)
+
+ROYALTIES_PUBLISHERS_INDEX = preparar_lista(ROYALTIES_PUBLISHERS)
+FPM_PUBLISHERS_INDEX = preparar_lista(FPM_PUBLISHERS)
+ESCRITORIO_PUBLISHERS_INDEX = preparar_lista(ESCRITORIO_PUBLISHERS)
+
 def calcular_relevancia(texto: str, termos) -> int:
     t = (texto or "").lower()
     score = 0
     for termo in termos:
-        if termo.lower() in t:
+        if termo in t:
             score += 1
     return score
 
@@ -213,7 +275,7 @@ def publisher_valido(publisher: str, lista) -> bool:
     if not publisher:
         return False
     p = publisher.lower()
-    return any(item.lower() in p for item in lista)
+    return any(item in p for item in lista)
 
 def janela_datas(dias: int):
     agora = datetime.now(TZ_BRASIL)
@@ -225,6 +287,68 @@ def janela_datas(dias: int):
         fim = agora
     return inicio, fim
 
+def normalizar_link(link: str) -> str:
+    parsed = urllib.parse.urlparse(link or "")
+    return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+
+def parse_feed_cached(url: str):
+    agora = time.monotonic()
+    cached = _feed_cache.get(url)
+    if cached and agora - cached["created_at"] < FEED_CACHE_TTL_SECONDS:
+        return cached["feed"]
+
+    try:
+        response = requests.get(
+            url,
+            headers={"User-Agent": USER_AGENT},
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        feed = feedparser.parse(response.content)
+    except requests.RequestException:
+        feed = feedparser.parse(b"")
+
+    _feed_cache[url] = {"created_at": agora, "feed": feed}
+    return feed
+
+def parse_feeds_parallel(urls):
+    if not urls:
+        return []
+
+    feeds = []
+    max_workers = min(MAX_FEED_WORKERS, len(urls))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_map = {executor.submit(parse_feed_cached, url): url for url in urls}
+        for future in as_completed(future_map):
+            feeds.append(future.result())
+    return feeds
+
+def finalizar_resultados(resultados):
+    resultados.sort(key=lambda x: (x["relevancia"], x["data_sort"]), reverse=True)
+    for item in resultados:
+        item.pop("data_sort", None)
+    return resultados
+
+def resultado_cache_get(chave):
+    cached = _result_cache.get(chave)
+    agora = time.monotonic()
+    if cached and agora - cached["created_at"] < RESULT_CACHE_TTL_SECONDS:
+        return cached["payload"]
+    return None
+
+def resultado_cache_set(chave, payload):
+    _result_cache[chave] = {"created_at": time.monotonic(), "payload": payload}
+    return payload
+
+def montar_payload(tipo, dias, metodo, resultados):
+    return {
+        "tipo": tipo,
+        "periodo": "Hoje" if dias == 1 else f"Últimos {dias} dias",
+        "metodo": metodo.capitalize(),
+        "quantidade": len(resultados),
+        "noticias": resultados,
+    }
+
 # =========================
 # MÉTODO GOOGLE (ORIGINAL)
 # =========================
@@ -232,14 +356,16 @@ def buscar_google(dias, termos, publishers, queries):
     inicio, fim = janela_datas(dias)
     resultados = []
     vistos = set()
+    urls = []
 
     for q in queries:
         query = urllib.parse.quote(q)
-        url = (
+        urls.append(
             "https://news.google.com/rss/search?"
             f"q={query}&hl=pt-BR&gl=BR&ceid=BR:pt-419"
         )
-        feed = feedparser.parse(url)
+
+    for feed in parse_feeds_parallel(urls):
 
         for entry in feed.entries:
             if not entry.get("published_parsed"):
@@ -252,9 +378,10 @@ def buscar_google(dias, termos, publishers, queries):
                 continue
 
             link = getattr(entry, "link", "") or ""
-            if not link or link in vistos:
+            link_limpo = normalizar_link(link)
+            if not link_limpo or link_limpo in vistos:
                 continue
-            vistos.add(link)
+            vistos.add(link_limpo)
 
             publisher = get_publisher(entry)
             if not publisher_valido(publisher, publishers):
@@ -269,12 +396,12 @@ def buscar_google(dias, termos, publishers, queries):
                 "titulo": getattr(entry, "title", ""),
                 "link": link,
                 "data": data_pub.strftime("%d/%m/%Y"),
+                "data_sort": data_pub,
                 "fonte": publisher,
                 "relevancia": relev
             })
 
-    resultados.sort(key=lambda x: (x["relevancia"], x["data"]), reverse=True)
-    return resultados
+    return finalizar_resultados(resultados)
 
 # =========================
 # RSS DIRETO
@@ -295,8 +422,7 @@ def buscar_rss(dias, termos, publishers, feeds):
     resultados = []
     vistos = set()
 
-    for feed_url in feeds:
-        feed = feedparser.parse(feed_url)
+    for feed in parse_feeds_parallel(feeds):
 
         for entry in feed.entries:
             if not entry.get("published_parsed"):
@@ -309,9 +435,10 @@ def buscar_rss(dias, termos, publishers, feeds):
                 continue
 
             link = getattr(entry, "link", "") or ""
-            if not link or link in vistos:
+            link_limpo = normalizar_link(link)
+            if not link_limpo or link_limpo in vistos:
                 continue
-            vistos.add(link)
+            vistos.add(link_limpo)
 
             publisher = feed.feed.get("title", "RSS")
             if not publisher_valido(publisher, publishers):
@@ -326,28 +453,28 @@ def buscar_rss(dias, termos, publishers, feeds):
                 "titulo": getattr(entry, "title", ""),
                 "link": link,
                 "data": data_pub.strftime("%d/%m/%Y"),
+                "data_sort": data_pub,
                 "fonte": publisher,
                 "relevancia": relev
             })
 
-    resultados.sort(key=lambda x: (x["relevancia"], x["data"]), reverse=True)
-    return resultados
+    return finalizar_resultados(resultados)
 
 # =========================
 # BING
 # =========================
 
-from urllib.parse import urlparse, urlunparse
-
 def buscar_bing(dias, termos, publishers, queries):
     inicio, fim = janela_datas(dias)
     resultados = []
     vistos = set()
+    urls = []
 
     for q in queries:
         query = urllib.parse.quote(q)
-        url = f"https://www.bing.com/news/search?q={query}&format=rss"
-        feed = feedparser.parse(url)
+        urls.append(f"https://www.bing.com/news/search?q={query}&format=rss")
+
+    for feed in parse_feeds_parallel(urls):
 
         for entry in feed.entries:
             if not entry.get("published_parsed"):
@@ -363,11 +490,8 @@ def buscar_bing(dias, termos, publishers, queries):
             if not link_original:
                 continue
 
-            # 🔥 NORMALIZA LINK (REMOVE TRACKING DO BING)
-            parsed = urlparse(link_original)
-            link_limpo = urlunparse((parsed.scheme, parsed.netloc, parsed.path, '', '', ''))
+            link_limpo = normalizar_link(link_original)
 
-            # 🔥 CONTROLE DE DUPLICAÇÃO
             if link_limpo in vistos:
                 continue
             vistos.add(link_limpo)
@@ -383,13 +507,12 @@ def buscar_bing(dias, termos, publishers, queries):
                 "titulo": getattr(entry, "title", ""),
                 "link": link_original,  # mantém link original para o usuário
                 "data": data_pub.strftime("%d/%m/%Y"),
+                "data_sort": data_pub,
                 "fonte": publisher,
                 "relevancia": relev
             })
 
-    resultados.sort(key=lambda x: (x["relevancia"], x["data"]), reverse=True)
-    return resultados
-
+    return finalizar_resultados(resultados)
 
 # =========================
 # ENDPOINTS
@@ -399,6 +522,11 @@ def buscar_royalties(
     dias: int = Query(7, ge=1, le=60),
     metodo: str = Query("google")
 ):
+    metodo = metodo.lower()
+    chave_cache = ("royalties", dias, metodo)
+    cached = resultado_cache_get(chave_cache)
+    if cached:
+        return cached
 
     queries = [
         "royalties de petróleo Brasil",
@@ -419,25 +547,25 @@ def buscar_royalties(
     ]
 
     if metodo == "rss":
-        resultados = buscar_rss(dias, ROYALTIES_TERMS, ROYALTIES_PUBLISHERS, RSS_FEEDS_ROYALTIES)
+        resultados = buscar_rss(dias, ROYALTIES_TERMS_INDEX, ROYALTIES_PUBLISHERS_INDEX, RSS_FEEDS_ROYALTIES)
     elif metodo == "bing":
-        resultados = buscar_bing(dias, ROYALTIES_TERMS, ROYALTIES_PUBLISHERS, queries)
+        resultados = buscar_bing(dias, ROYALTIES_TERMS_INDEX, ROYALTIES_PUBLISHERS_INDEX, queries)
     else:
-        resultados = buscar_google(dias, ROYALTIES_TERMS, ROYALTIES_PUBLISHERS, queries)
+        resultados = buscar_google(dias, ROYALTIES_TERMS_INDEX, ROYALTIES_PUBLISHERS_INDEX, queries)
 
-    return {
-        "tipo": "Royalties de Petróleo",
-        "periodo": "Hoje" if dias == 1 else f"Últimos {dias} dias",
-        "metodo": metodo.capitalize(),
-        "quantidade": len(resultados),
-        "noticias": resultados
-    }
+    payload = montar_payload("Royalties de Petróleo", dias, metodo, resultados)
+    return resultado_cache_set(chave_cache, payload)
 
 @app.get("/buscar-fpm")
 def buscar_fpm(
     dias: int = Query(7, ge=1, le=60),
     metodo: str = Query("google")
 ):
+    metodo = metodo.lower()
+    chave_cache = ("fpm", dias, metodo)
+    cached = resultado_cache_get(chave_cache)
+    if cached:
+        return cached
 
     queries = [
        # base direta
@@ -490,16 +618,57 @@ def buscar_fpm(
     ]
 
     if metodo == "rss":
-        resultados = buscar_rss(dias, FPM_TERMS, FPM_PUBLISHERS, RSS_FEEDS_FPM)
+        resultados = buscar_rss(dias, FPM_TERMS_INDEX, FPM_PUBLISHERS_INDEX, RSS_FEEDS_FPM)
     elif metodo == "bing":
-        resultados = buscar_bing(dias, FPM_TERMS, FPM_PUBLISHERS, queries)
+        resultados = buscar_bing(dias, FPM_TERMS_INDEX, FPM_PUBLISHERS_INDEX, queries)
     else:
-        resultados = buscar_google(dias, FPM_TERMS, FPM_PUBLISHERS, queries)
+        resultados = buscar_google(dias, FPM_TERMS_INDEX, FPM_PUBLISHERS_INDEX, queries)
 
-    return {
-        "tipo": "FPM",
-        "periodo": "Hoje" if dias == 1 else f"Últimos {dias} dias",
-        "metodo": metodo.capitalize(),
-        "quantidade": len(resultados),
-        "noticias": resultados
-    }
+    payload = montar_payload("FPM", dias, metodo, resultados)
+    return resultado_cache_set(chave_cache, payload)
+
+@app.get("/buscar-escritorio")
+def buscar_escritorio(
+    dias: int = Query(7, ge=1, le=365),
+    metodo: str = Query("google")
+):
+    metodo = metodo.lower()
+    chave_cache = ("escritorio", dias, metodo)
+    cached = resultado_cache_get(chave_cache)
+    if cached:
+        return cached
+
+    queries = [
+        '"camilarodrigues.advogados"',
+        '"Camila Rodrigues Advogados"',
+        '"Camila Rodrigues Assessoria Jurídica"',
+        '"Camila Rodrigues" advogada',
+        '"Camila Rodrigues" assessoria jurídica',
+
+        # variações estratégicas
+        '"CR Assessoria Jurídica"',
+        '"Camila Rodrigues" processo',
+        '"Camila Rodrigues" decisão judicial',
+        '"Camila Rodrigues" tribunal',
+        '"Camila Rodrigues" Diário Oficial',
+        '"Camila Rodrigues" publicação',
+
+        # redes sociais
+        'site:instagram.com "Camila Rodrigues"',
+        'site:linkedin.com "Camila Rodrigues"',
+        'site:facebook.com "Camila Rodrigues"',
+        'site:twitter.com "Camila Rodrigues"',
+        'site:youtube.com "Camila Rodrigues"',
+    ]
+
+    if metodo == "rss":
+        resultados = buscar_rss(dias, ESCRITORIO_TERMS_INDEX, ESCRITORIO_PUBLISHERS_INDEX, RSS_FEEDS_ROYALTIES)
+    elif metodo == "bing":
+        resultados = buscar_bing(dias, ESCRITORIO_TERMS_INDEX, ESCRITORIO_PUBLISHERS_INDEX, queries)
+    else:
+        resultados = buscar_google(dias, ESCRITORIO_TERMS_INDEX, ESCRITORIO_PUBLISHERS_INDEX, queries)
+
+    return resultado_cache_set(
+        chave_cache,
+        montar_payload("Camila Rodrigues Assessoria Jurídica", dias, metodo, resultados),
+    )

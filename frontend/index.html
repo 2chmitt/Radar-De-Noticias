@@ -1,49 +1,98 @@
 <!DOCTYPE html>
-<html lang="pt-br">
+<html lang="pt-BR">
 <head>
-  <meta charset="UTF-8" />
-  <title>Radar de Notícias</title>
-  <link rel="icon" type="image/png" href="/static/imagem1.png">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Radar editorial de notícias sobre royalties de petróleo, gás natural, ANP e receitas públicas.">
+  <meta name="theme-color" content="#070D32">
+  <title>Radar de Notícias | Royalties</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/png" href="/static/imagem3.png">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 
-<body class="theme-royalties" data-endpoint="/buscar-royalties">
-  <header class="header">
-    <div class="logo">📊 Radar de Notícias</div>
+<body class="theme-royalties" data-endpoint="/buscar-royalties" data-section="Royalties" data-description="Petróleo, gás natural, ANP e receitas municipais">
+  <a class="skip-link" href="#conteudo">Ir para o conteúdo</a>
 
-    <nav class="tabs">
-      <a class="tab active" href="/">🛢 Royalties</a>
-      <a class="tab" href="/fpm">🏛 FPM</a>
-      <a class="tab" href="/sobre">ℹ Sobre</a>
-    </nav>
-
-    <div class="controls">
-      <select id="periodoSelect" class="select-periodo">
-        <option value="1">Hoje</option>
-        <option value="2">Últimos 2 dias</option>
-        <option value="3">Últimos 3 dias</option>
-        <option value="4">Últimos 4 dias</option>
-        <option value="5">Últimos 5 dias</option>
-        <option value="6">Últimos 6 dias</option>
-        <option value="7" selected>Últimos 7 dias</option>
-        <option value="15">Últimos 15 dias</option>
-        <option value="30">Últimos 30 dias</option>
-        <option value="60">Últimos 60 dias</option>
-      </select>
-
-      <select id="metodoSelect" class="select-periodo">
-        <option value="google" selected>Google News</option>
-        <option value="rss">RSS Direto</option>
-        <option value="bing">Bing News</option>
-      </select>
-
-      <button id="buscarBtn" class="btn-primary">Pesquisar</button>
+  <header class="site-header">
+    <div class="brand">
+      <img class="brand-mark" src="/static/imagem3.png" alt="" aria-hidden="true">
+      <div>
+        <strong>Radar de Notícias</strong>
+        <span>CR assessoria</span>
+      </div>
     </div>
+
+    <nav class="tabs" aria-label="Seções do radar">
+      <a class="tab active" href="/" aria-current="page">Royalties</a>
+      <a class="tab" href="/fpm">FPM</a>
+      <a class="tab" href="/escritorio">Escritório</a>
+      <a class="tab" href="/sobre">Sobre</a>
+    </nav>
   </header>
 
-  <main class="container">
-    <div id="info"></div>
-    <div id="resultado" class="grid"></div>
+  <main id="conteudo" class="page-shell">
+    <section class="weekly-strip" aria-labelledby="weeklyStripTitle">
+      <div class="weekly-strip-header">
+        <h2 id="weeklyStripTitle">Noticias Semanais</h2>
+        <time id="currentDate" class="weekly-date"></time>
+      </div>
+      <div id="topNewsRail" class="weekly-viewport" aria-label="Faixa animada com notícias semanais">
+        <div class="weekly-empty">Carregando notícias da semana...</div>
+      </div>
+    </section>
+
+    <section class="hero">
+      <div class="hero-copy">
+        <h1>RADAR DE NOTICIAS</h1>
+        <p>Resultados filtrados por fontes relevantes, período, método de busca e aderência aos termos monitorados.</p>
+      </div>
+
+      <form id="searchForm" class="search-panel" aria-label="Filtros de pesquisa">
+        <label class="field">
+          <span>Período</span>
+          <select id="periodoSelect" class="select-periodo">
+            <option value="1">Hoje</option>
+            <option value="2">Últimos 2 dias</option>
+            <option value="3">Últimos 3 dias</option>
+            <option value="4">Últimos 4 dias</option>
+            <option value="5">Últimos 5 dias</option>
+            <option value="6">Últimos 6 dias</option>
+            <option value="7" selected>Últimos 7 dias</option>
+            <option value="15">Últimos 15 dias</option>
+            <option value="30">Últimos 30 dias</option>
+            <option value="60">Últimos 60 dias</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Método</span>
+          <select id="metodoSelect" class="select-periodo">
+            <option value="google" selected>Google News</option>
+            <option value="rss">RSS Direto</option>
+            <option value="bing">Bing News</option>
+          </select>
+        </label>
+
+        <button id="buscarBtn" class="btn-primary" type="submit">
+          <span>Pesquisar</span>
+        </button>
+      </form>
+    </section>
+
+    <section class="results-section" aria-labelledby="resultadosTitulo">
+      <div class="section-heading">
+        <div>
+          <span class="eyebrow">Resultados</span>
+          <h2 id="resultadosTitulo">Últimas notícias encontradas</h2>
+        </div>
+        <div id="info" class="status-card" role="status" aria-live="polite">Aguardando pesquisa.</div>
+      </div>
+
+      <div id="resultado" class="grid" aria-live="polite"></div>
+    </section>
   </main>
 
   <script src="/static/script.js"></script>

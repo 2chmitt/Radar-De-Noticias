@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Radar editorial de notícias sobre FPM, repasses municipais, IBGE, TCU, STF e orçamento público.">
+  <meta name="description" content="Radar editorial de menções públicas relacionadas ao escritório Camila Rodrigues Assessoria Jurídica.">
   <meta name="theme-color" content="#070D32">
-  <title>Radar de Notícias | FPM</title>
+  <title>Radar de Notícias | Escritório</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -13,22 +13,22 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 
-<body class="theme-fpm" data-endpoint="/buscar-fpm" data-section="FPM" data-description="Repasses, coeficientes, IBGE e finanças municipais">
+<body class="theme-escritorio" data-endpoint="/buscar-escritorio" data-section="Escritório" data-description="Menções institucionais, publicações, redes sociais e decisões">
   <a class="skip-link" href="#conteudo">Ir para o conteúdo</a>
 
   <header class="site-header">
     <div class="brand">
       <img class="brand-mark" src="/static/imagem3.png" alt="" aria-hidden="true">
       <div>
-        <strong>Radar de Notícias</strong>
+        <strong>Radar do Escritório</strong>
         <span>CR assessoria</span>
       </div>
     </div>
 
     <nav class="tabs" aria-label="Seções do radar">
       <a class="tab" href="/">Royalties</a>
-      <a class="tab active" href="/fpm" aria-current="page">FPM</a>
-      <a class="tab" href="/escritorio">Escritório</a>
+      <a class="tab" href="/fpm">FPM</a>
+      <a class="tab active" href="/escritorio" aria-current="page">Escritório</a>
       <a class="tab" href="/sobre">Sobre</a>
     </nav>
   </header>
@@ -47,7 +47,7 @@
     <section class="hero">
       <div class="hero-copy">
         <h1>RADAR DE NOTICIAS</h1>
-        <p>Busca orientada por termos institucionais, fontes públicas e portais relevantes para decisões municipais.</p>
+        <p>Pesquisa focada em citações, publicações oficiais, redes sociais e referências jurídicas relevantes.</p>
       </div>
 
       <form id="searchForm" class="search-panel" aria-label="Filtros de pesquisa">
@@ -59,6 +59,9 @@
             <option value="15">Últimos 15 dias</option>
             <option value="30">Últimos 30 dias</option>
             <option value="60">Últimos 60 dias</option>
+            <option value="90">Últimos 90 dias</option>
+            <option value="180">Últimos 6 meses</option>
+            <option value="365">Último 1 ano</option>
           </select>
         </label>
 
@@ -66,8 +69,8 @@
           <span>Método</span>
           <select id="metodoSelect" class="select-periodo">
             <option value="google" selected>Google News</option>
-            <option value="rss">RSS Direto</option>
             <option value="bing">Bing News</option>
+            <option value="rss">RSS Direto</option>
           </select>
         </label>
 
@@ -81,7 +84,7 @@
       <div class="section-heading">
         <div>
           <span class="eyebrow">Resultados</span>
-          <h2 id="resultadosTitulo">Últimas notícias encontradas</h2>
+          <h2 id="resultadosTitulo">Últimas menções encontradas</h2>
         </div>
         <div id="info" class="status-card" role="status" aria-live="polite">Aguardando pesquisa.</div>
       </div>
