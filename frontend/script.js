@@ -17,6 +17,8 @@ document.addEventListener("DOMContentLoaded", () => {
   let avisoAtual = "";
   let noticiasAtuais = [];
   let visibleNewsCount = INITIAL_VISIBLE_NEWS;
+  let activeSearchController = null;
+  let searchSequence = 0;
 
   const createNode = (tag, className, text) => {
     const node = document.createElement(tag);
@@ -198,16 +200,34 @@ document.addEventListener("DOMContentLoaded", () => {
     const dias = Number.parseInt(periodoSelect.value, 10);
     const metodo = metodoSelect.value;
     const url = `${endpoint}?dias=${encodeURIComponent(dias)}&metodo=${encodeURIComponent(metodo)}`;
+    const searchId = searchSequence + 1;
+    searchSequence = searchId;
+
+    if (activeSearchController) {
+      activeSearchController.abort();
+    }
+
+    const controller = new AbortController();
+    activeSearchController = controller;
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, 30000);
 
     btn.disabled = true;
     btn.querySelector("span").textContent = "Pesquisando";
     showLoading();
 
     try {
-      const resp = await fetch(url, { headers: { Accept: "application/json" } });
+      const resp = await fetch(url, {
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+        cache: "no-store",
+      });
       if (!resp.ok) throw new Error(`Erro HTTP ${resp.status}`);
 
       const data = await resp.json();
+      if (searchId !== searchSequence) return;
+
       setInfo(data);
 
       noticiasAtuais = Array.isArray(data.noticias) ? data.noticias : [];
@@ -221,22 +241,36 @@ document.addEventListener("DOMContentLoaded", () => {
       renderTopRail(noticiasAtuais);
       renderResults();
     } catch (error) {
-      infoDiv.textContent = "Erro ao buscar notícias.";
+      if (searchId !== searchSequence) return;
+
+      infoDiv.textContent = error.name === "AbortError"
+        ? "Tempo limite excedido ao buscar notícias."
+        : "Erro ao buscar notícias.";
       resultDiv.className = "results-hud";
       resultDiv.replaceChildren();
       const empty = createNode("div", "empty-state error-state");
       empty.appendChild(createNode("span", "eyebrow", "Falha na consulta"));
-      empty.appendChild(createNode("h3", "", "Não foi possível carregar os resultados agora."));
-      empty.appendChild(createNode("p", "", "Verifique a conexão do backend e tente novamente."));
+      empty.appendChild(createNode("h3", "", error.name === "AbortError"
+        ? "A busca demorou demais para responder."
+        : "Não foi possível carregar os resultados agora."));
+      empty.appendChild(createNode("p", "", "Tente novamente ou alterne o motor de busca."));
       resultDiv.appendChild(empty);
     } finally {
-      btn.disabled = false;
-      btn.querySelector("span").textContent = "Pesquisar";
+      clearTimeout(timeoutId);
+      if (searchId === searchSequence) {
+        activeSearchController = null;
+        btn.disabled = false;
+        btn.querySelector("span").textContent = "Pesquisar";
+      }
     }
   };
 
   formatCurrentDate();
   form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    buscarNoticias();
+  });
+  btn.addEventListener("click", (event) => {
     event.preventDefault();
     buscarNoticias();
   });

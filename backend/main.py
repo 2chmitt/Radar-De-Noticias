@@ -33,32 +33,41 @@ from starlette.staticfiles import StaticFiles
 class TunedStaticFiles(StaticFiles):
     async def get_response(self, path, scope):
         response = await super().get_response(path, scope)
-        response.headers["Cache-Control"] = "public, max-age=3600"
+        if path.endswith((".js", ".css")):
+            response.headers["Cache-Control"] = "no-store"
+        else:
+            response.headers["Cache-Control"] = "public, max-age=3600"
         return response
 
 app.mount("/static", TunedStaticFiles(directory=FRONTEND_DIR), name="static")
 
 
+def frontend_file(filename: str):
+    response = FileResponse(os.path.join(FRONTEND_DIR, filename))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.get("/")
 def serve_index():
-    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+    return frontend_file("index.html")
 
 @app.get("/fpm")
 def serve_fpm():
-    return FileResponse(os.path.join(FRONTEND_DIR, "fpm.html"))
+    return frontend_file("fpm.html")
 
 @app.get("/sobre")
 def serve_sobre():
-    return FileResponse(os.path.join(FRONTEND_DIR, "sobre.html"))
+    return frontend_file("sobre.html")
 
 @app.get("/escritorio")
 def serve_escritorio():
-    return FileResponse(os.path.join(FRONTEND_DIR, "escritorio.html"))
+    return frontend_file("escritorio.html")
 
 # =========================
 # CONFIG
 # =========================
-MIN_RELEVANCIA = 1
+MIN_RELEVANCIA = 2
 TZ_BRASIL = timezone(timedelta(hours=-3))
 REQUEST_TIMEOUT_SECONDS = 8
 FEED_CACHE_TTL_SECONDS = 600
@@ -107,7 +116,7 @@ FPM_PUBLISHERS = [
 ESCRITORIO_PUBLISHERS = [
     # Grandes portais
     "g1","UOL","Estadão","Folha","O Globo","CNN Brasil",
-    "Valor Econômico","InfoMoney","Agência Brasil",
+    "Valor Econômico","InfoMoney","Agência Brasil","O TEMPO",
 
     # Jurídicos
     "Consultor Jurídico","ConJur","Migalhas",
@@ -235,12 +244,43 @@ ESCRITORIO_TERMS = [
     "camila rodrigues assessoria jurídica",
     "camila rodrigues advogada",
     "camila rodrigues assessoria jurídica",
+    "camila rodrigues da silva",
+    "camila rodrigues da silva sociedade individual de advocacia",
     "cr assessoria jurídica",
     "camila rodrigues escritório",
     "processo camila rodrigues",
     "ação camila rodrigues",
     "decisão camila rodrigues",
     "publicação camila rodrigues",
+    "sociedade individual de advocacia",
+    "prefeitura municipal",
+    "prefeituras municipais",
+    "município",
+    "municípios",
+    "administração pública municipal",
+    "contrata advocacia",
+    "contratação de advocacia",
+    "contratação de escritório de advocacia",
+    "escritório de advocacia especializado",
+    "contrato de inexigibilidade",
+    "inexigibilidade de licitação",
+    "honorários de êxito",
+    "recuperação de receitas",
+    "recuperação de receitas públicas",
+    "recuperação e revisão de receita pública",
+    "revisão de receitas públicas",
+    "receita pública",
+    "receitas públicas",
+    "ações judiciais e administrativas",
+    "repasses constitucionais compulsórios",
+    "transferências constitucionais",
+    "fundo de participação dos municípios",
+    "fundo de participacao dos municipios",
+    "fpm",
+    "receitas do fpm",
+    "repasses do fpm",
+    "revisão de repasses federais",
+    "repasses federais",
 ]
 
 # =========================
@@ -644,6 +684,8 @@ def buscar_escritorio(
         '"Camila Rodrigues Assessoria Jurídica"',
         '"Camila Rodrigues" advogada',
         '"Camila Rodrigues" assessoria jurídica',
+        '"Camila Rodrigues da Silva" advocacia',
+        '"Camila Rodrigues da Silva" "Sociedade Individual de Advocacia"',
 
         # variações estratégicas
         '"CR Assessoria Jurídica"',
@@ -652,6 +694,25 @@ def buscar_escritorio(
         '"Camila Rodrigues" tribunal',
         '"Camila Rodrigues" Diário Oficial',
         '"Camila Rodrigues" publicação',
+        '"Camila Rodrigues" "Fundo de Participação dos Municípios"',
+        '"Camila Rodrigues" FPM',
+        '"Camila Rodrigues" "recuperação de receitas"',
+        '"Camila Rodrigues" "revisão de receitas"',
+        '"Camila Rodrigues" "repasses constitucionais"',
+        '"Camila Rodrigues" prefeitura',
+        '"Camila Rodrigues" município',
+        '"Camila Rodrigues" "prefeitura municipal"',
+        '"Camila Rodrigues" "contratação de escritório de advocacia"',
+        '"prefeitura municipal" "Camila Rodrigues" FPM',
+        '"prefeitura municipal" advocacia FPM',
+        '"prefeitura municipal" "recuperação de receitas"',
+        '"município" "recuperação de receitas" FPM',
+        '"advocacia" "recuperação de receitas" FPM',
+        '"honorários de êxito" "Camila Rodrigues"',
+        '"inexigibilidade" "Camila Rodrigues"',
+        'site:otempo.com.br "Camila Rodrigues" FPM',
+        'site:otempo.com.br "prefeitura municipal" advocacia',
+        'site:otempo.com.br "recuperação de receitas" FPM',
 
         # redes sociais
         'site:instagram.com "Camila Rodrigues"',
